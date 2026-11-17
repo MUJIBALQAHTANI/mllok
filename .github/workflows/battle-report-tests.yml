@@ -1,0 +1,38 @@
+name: Battle simulator verification
+on:
+  push:
+    branches: [simulator-reports-v2]
+    paths: ['battle-simulator/**', '.github/workflows/battle-report-tests.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Engine and privacy tests
+        run: |
+          mkdir -p battle-simulator/docs
+          set -o pipefail
+          node --test battle-simulator/test.mjs | tee battle-simulator/docs/engine-test.txt
+      - name: Install isolated browser test dependencies
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Mobile browser and sharing tests
+        run: node battle-simulator/browser.test.mjs
+      - name: Capture source provenance
+        if: always()
+        run: |
+          git rev-parse HEAD > battle-simulator/docs/source-commit.txt
+          sha256sum battle-simulator/engine.mjs battle-simulator/ui.mjs battle-simulator/style.css battle-simulator/index.html > battle-simulator/docs/source-sha256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: glorykings-battle-simulator-evidence
+          path: battle-simulator/
+          retention-days: 14
