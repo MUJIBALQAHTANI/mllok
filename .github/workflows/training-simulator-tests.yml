@@ -1,0 +1,53 @@
+name: Training simulator verification
+on:
+  push:
+    branches: [simulator-reports-v2]
+    paths:
+      - 'battle-simulator/training*'
+      - 'battle-simulator/verify-training-published.mjs'
+      - 'battle-simulator/docs/TRAINING_SIMULATOR_AR.md'
+      - '.github/workflows/training-simulator-tests.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Training calculations and boundary rules
+        run: |
+          mkdir -p battle-simulator/docs
+          set -o pipefail
+          node --test battle-simulator/training.test.mjs | tee battle-simulator/docs/training-engine-test.txt
+      - name: Install browser test dependencies
+        run: |
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Verify published training files
+        env:
+          PUBLIC_TRAINING_URL: https://glorykings-training-simulator.onrender.com
+        run: node battle-simulator/verify-training-published.mjs
+      - name: Training mobile interactions and sharing
+        env:
+          PUBLIC_TRAINING_URL: https://glorykings-training-simulator.onrender.com
+        run: node battle-simulator/training.browser.test.mjs
+      - name: Record tested source
+        if: always()
+        run: |
+          git rev-parse HEAD > battle-simulator/docs/training-source-commit.txt
+          sha256sum battle-simulator/training.html battle-simulator/training.css battle-simulator/training-engine.mjs battle-simulator/training-ui.mjs battle-simulator/engine.mjs > battle-simulator/docs/training-source-sha256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: glorykings-training-simulator-evidence
+          path: |
+            battle-simulator/training*
+            battle-simulator/engine.mjs
+            battle-simulator/verify-training-published.mjs
+            battle-simulator/docs/TRAINING_SIMULATOR_AR.md
+            battle-simulator/docs/training*
+          retention-days: 14
