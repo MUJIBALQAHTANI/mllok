@@ -18,22 +18,48 @@ try{
   check('forge comparison is20 and70 '+width,(await page.locator('#comparisonContent').innerText()).includes('20%')&&(await page.locator('#comparisonContent').innerText()).includes('70%'));
   check('point delta50 and relative41.67 '+width,(await page.locator('#comparisonContent').innerText()).includes('50 نقطة مئوية')&&(await page.locator('#comparisonContent').innerText()).includes('41.67%'));
   if(width===390||width===1280)await page.screenshot({path:path.join(docs,'report-'+width+'.png')});
-  await page.locator('#reportContent .troop-report [data-unit="LightInfantry"]').click();await page.locator('#unitDialog[open]').waitFor();check('unit details no overflow '+width,await page.locator('#unitDialog').evaluate(e=>e.scrollWidth<=e.clientWidth));
+  await page.locator('#reportContent .detail-troops [data-unit="LightInfantry"]').first().click();await page.locator('#unitDialog[open]').waitFor();check('unit details no overflow '+width,await page.locator('#unitDialog').evaluate(e=>e.scrollWidth<=e.clientWidth));
   if(width===390)await page.screenshot({path:path.join(docs,'forge-detail-mobile.png')});await page.locator('[data-close="unitDialog"]').click();
   await page.locator('#reportView').selectOption('attacker');const text=await page.locator('#comparisonContent').innerText();check('attacker hidden forge and no arrows '+width,text.includes('؟؟؟')&&!text.includes('↑')&&!text.includes('↓'));
-  check('hospital says coming soon '+width,(await page.locator('#reportContent .coming').innerText()).includes('قريبًا'));
+  check('hospital actual admission shown '+width,(await page.locator('#reportContent').innerText()).includes('الجرحى المقبولون'));
+  check('detailed troop sides match reference '+width,await page.locator('.detail-troops').count()===2);
+  check('hidden opponent hospital concealed '+width,(await page.locator('.hospital-report.concealed').innerText()).includes('محجوبة'));
+  check('details tables fit '+width,await page.locator('.detail-troops').evaluateAll(es=>es.every(e=>e.scrollWidth<=e.clientWidth))); 
   await page.locator('#shareReport').click();const url=await page.locator('#shareOutput').inputValue();check('report link created '+width,url.includes('#r='));
   const shared=await context.newPage();shared.on('pageerror',e=>errors.push(e.message));await shared.goto(url);await shared.locator('#reportDialog[open]').waitFor();check('shared report perspective locked '+width,await shared.locator('#reportView').isDisabled());check('shared page no editable scenario '+width,await shared.locator('#workspace').isHidden());check('shared report no enemy forge '+width,!(await shared.locator('#comparisonContent').innerText()).includes('70%'));await shared.close();
   const dp=page.waitForEvent('download');await page.locator('#exportReport').click();const dl=await dp;const jf=await dl.path();const report=JSON.parse(await readFile(jf,'utf8'));check('export has no enemy array '+width,report.sides.defender.rows===null&&report.power===null&&report.wall===null&&!('stock' in report.loot)&&!('scenario' in report));
+  check('export own-only hospital and economy '+width,report.hospital.attacker.admitted>0&&report.hospital.defender===null&&report.economy.defender===null);
+  check('export human conservation '+width,report.sides.attacker.rows.every(x=>x.count===x.survived+x.dead+x.wounded+x.destroyed));
+  await page.locator('#reportView').selectOption('defender');
+  const ddp=page.waitForEvent('download');await page.locator('#exportReport').click();const ddl=await ddp;const defenderReport=JSON.parse(await readFile(await ddl.path(),'utf8'));
+  check('defender gets own loss and resources, no attacker data '+width,defenderReport.sides.attacker.rows===null&&defenderReport.hospital.attacker===null&&defenderReport.economy.attacker===null&&defenderReport.loot.stock&&defenderReport.wall);
+  await page.locator('#reportView').selectOption('attacker');
   await page.locator('[data-close="reportDialog"]').click();await page.locator('[data-example="small"]').click();await page.locator('#calculate').click();await page.locator('#reportBtn').click();await page.locator('#reportDialog[open]').waitFor();
   check('2000 versus50000 report hides defender '+width,!(await page.locator('#reportContent').innerText()).includes('50,000')&&(await page.locator('#reportContent').innerText()).includes('لم يعد ناجون'));
   if(width===390)await page.screenshot({path:path.join(docs,'concealed-report-mobile.png')});
+  await page.locator('[data-close="reportDialog"]').click();await page.locator('#hospitalA').selectOption('1');await page.locator('#occupiedA').fill('4999');await page.locator('#calculate').click();await page.locator('#reportBtn').click();
+  const hdp=page.waitForEvent('download');await page.locator('#exportReport').click();const hdl=await hdp;const hr=JSON.parse(await readFile(await hdl.path(),'utf8'));
+  check('hospital occupied beds cap admission to one '+width,hr.hospital.attacker.admitted===1&&hr.hospital.attacker.occupiedAfter===5000&&hr.sides.attacker.summary.wounded===1&&hr.loot.total===0);
+
   await page.locator('[data-close="reportDialog"]').click();await page.locator('#a-LightInfantry').fill('2');check('input invalidates report '+width,await page.locator('#reportBtn').isDisabled());await page.locator('#a-LightInfantry').fill('-1');await page.locator('#calculate').click();check('negative input rejected '+width,await page.locator('#error').isVisible());
   await page.locator('[data-example="loot"]').click();await page.locator('#cargoDetails summary').click();await page.locator('#clearCarry').click();await page.locator('#calculate').click();await page.locator('#reportBtn').click();check('missing carry never invents loot '+width,(await page.locator('#reportContent').innerText()).includes('حسبة النهب غير مؤكدة'));
   await page.locator('[data-close="reportDialog"]').click();await page.locator('#guideBtn').click();check('guide opens '+width,await page.locator('#guideDialog[open]').isVisible());check('guide no horizontal overflow '+width,await page.locator('#guideDialog').evaluate(e=>e.scrollWidth<=e.clientWidth));await page.locator('[data-close="guideDialog"]').click();
+  await page.locator('#trainUnit').selectOption('LightInfantry');await page.locator('#trainCount').fill('1000');await page.locator('#trainBuilding').selectOption('1');await page.locator('#trainForge').selectOption('1');await page.locator('#calculateTraining').click();
+  check('baseline thousand quote gold982 '+width,(await page.locator('#trainingQuote').innerText()).includes('982'));
+  await page.locator('#trainForge').selectOption('20');await page.locator('#calculateTraining').click();
+  check('forge20 quote gold1729 '+width,(await page.locator('#trainingQuote').innerText()).includes('1,729'));
+  check('training level table contains30 levels '+width,await page.locator('#trainingLevels tbody tr').count()===30);
+  await page.locator('#trainMode').selectOption('refit');await page.locator('#trainFromForge').selectOption('3');await page.locator('#calculateTraining').click();
+  check('paid refit delta668 gold '+width,(await page.locator('#trainingQuote').innerText()).includes('668'));
+  await page.locator('#trainFromForge').selectOption('30');await page.locator('#calculateTraining').click();
+  check('downgrade rejected '+width,await page.locator('#trainingError').isVisible());
+  await page.locator('#trainMode').selectOption('recruit');await page.locator('#trainFromForge').selectOption('1');await page.locator('#calculateTraining').click();
+  check('training no horizontal overflow '+width,await page.locator('#trainingPanel').evaluate(e=>e.scrollWidth<=e.clientWidth));
+  if(width===390){await page.locator('#trainingPanel').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(docs,'training-mobile.png')});}
   check('zero browser exceptions '+width,errors.length===0);await context.close();
  }
  // Validate deployed URL too when supplied; no login, no player data, read-only simulator inputs.
  if(process.env.PUBLIC_SIMULATOR_URL){const p=await browser.newPage({viewport:{width:390,height:844}});await p.goto(process.env.PUBLIC_SIMULATOR_URL);await p.locator('#calculate').click();await p.locator('#reportBtn').click();check('published simulator report works',await p.locator('#reportDialog[open]').isVisible());await p.screenshot({path:path.join(docs,'published-mobile.png')});await p.close();}
 }catch(e){failure=e;console.error(e);}finally{await writeFile(path.join(docs,'browser-verification.json'),JSON.stringify({status:failure?'FAIL':'PASS',checks:checks.length,widths:[320,390,428,768,1280],engine:'Chromium desktop emulation, not physical iPhone',generatedAt:new Date().toISOString(),results:checks,error:failure?.stack??null},null,2));await browser.close();await new Promise(r=>server.close(r));}
 if(failure)process.exit(1);console.log('BROWSER_PASS '+checks.length+' checks');
+
