@@ -53,7 +53,7 @@ try{
   check('paid refit delta668 gold '+width,(await page.locator('#trainingQuote').innerText()).includes('668'));
   await page.locator('#trainFromForge').selectOption('30');await page.locator('#calculateTraining').click();
   check('downgrade rejected '+width,await page.locator('#trainingError').isVisible());
-  await page.locator('#trainMode').selectOption('recruit');await page.locator('#trainFromForge').selectOption('1');await page.locator('#calculateTraining').click();
+  await page.locator('#trainFromForge').selectOption('1');await page.locator('#trainMode').selectOption('recruit');await page.locator('#calculateTraining').click();
   check('training no horizontal overflow '+width,await page.locator('#trainingPanel').evaluate(e=>e.scrollWidth<=e.clientWidth));
   if(width===390){await page.locator('#trainingPanel').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(docs,'training-mobile.png')});}
   check('zero browser exceptions '+width,errors.length===0);await context.close();

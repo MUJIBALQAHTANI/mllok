@@ -59,8 +59,9 @@ function levelResources(unitId,forge){const e=costCatalog(unitId),rf=100+6*(inte
 function quoteGold(count,unitWorkNumerator,unitWorkDenominator,speedNumerator){
  const tiers=GOLD_TIERS.map(t=>({...t,count:Math.max(0,Math.min(count,t.to)-t.from+1)})).filter(t=>t.count>0);
  const weightedHundredths=tiers.reduce((n,t)=>n+BigInt(t.count)*BigInt(100-t.discountPercent),0n);
- // Twenty seconds of effective queue time is one gold. The quantity discount
- // applies only to units inside each marginal tier, never the entire purchase.
+ // Twenty seconds of effective work is one gold. Healing work also accounts
+ // for the shared hospital throughput; a minimum patient duration can make
+ // actual completion time longer. Marginal discounts never reprice a batch.
  const denominator=unitWorkDenominator*BigInt(speedNumerator)*20n*100n;
  const numerator=unitWorkNumerator*290n*weightedHundredths;
  const beforeNumerator=unitWorkNumerator*290n*BigInt(count)*100n;
@@ -89,7 +90,14 @@ export function healingQuote({unitId,count,forge,hospitalLevel=1}={}){
  if(costCatalog(unitId).building==='workshop')fail('آلات الحصار لا تعالج في المستشفى');
  integer(hospitalLevel,1,30,'مستوى المستشفى للعلاج');
  const recruitResources=levelResources(unitId,forge),unitResources=Object.fromEntries(RESOURCES.map(k=>[k,Number(ceilRatio(BigInt(recruitResources[k])*40n,100n))]));
- return freeze({...baseQuote({unitId,count,forge,buildingLevel:hospitalLevel,unitResources,effortHundredths:100+4*(forge-1),workPercent:35,kind:'healing'}),building:'hospital',hospitalLevel,resourcePercent:40});
+ const serial=baseQuote({unitId,count,forge,buildingLevel:hospitalLevel,unitResources,effortHundredths:100+4*(forge-1),workPercent:35,kind:'healing'});
+ const capacity=BigInt(hospitalCapacity(hospitalLevel)),speedNumerator=290+7*(hospitalLevel-1),unitWorkNumerator=BigInt(ECONOMY[unitId].baseSeconds)*BigInt(100+4*(forge-1))*35n,unitWorkDenominator=10000n;
+ // One shared treatment pool serves cohorts serially. The capacity / 2500
+ // throughput is continuous (e.g. 2.2 at level 2), without integer-team cliffs.
+ // A small cohort cannot finish faster than treating one actual patient.
+ const workCount=BigInt(count)*2500n,limitedCount=workCount>capacity?workCount:capacity;
+ const seconds=count?Number(ceilRatio(unitWorkNumerator*290n*limitedCount,unitWorkDenominator*BigInt(speedNumerator)*capacity)):0;
+ return freeze({...serial,building:'hospital',hospitalLevel,resourcePercent:40,parallelThroughput:hospitalThroughput(hospitalLevel),baseSerialSeconds:serial.seconds,seconds,...quoteGold(count,unitWorkNumerator*2500n,unitWorkDenominator*capacity,speedNumerator)});
 }
 function normalizedTraining(value){
  const v=value??{barracks:1,stable:1,workshop:1};
@@ -110,7 +118,7 @@ function armyEconomy(rows,training,hospitalLevel){
 }
 export function levelTable(unitId='LightInfantry',count=1,buildingLevel=1){
  costCatalog(unitId);quoteCount(count);integer(buildingLevel,1,30,'مستوى مبنى التدريب');
- return freeze(Array.from({length:30},(_,i)=>{const level=i+1;return{level,hospitalCapacity:hospitalCapacity(level),forgePercent:forgeBonus(level),resourceFactor:1+.06*i,effortFactor:1+.04*i,buildingSpeedPercent:70*i/29,buildingSpeedFactor:buildingSpeed(level),quote:trainingQuote({unitId,count,forge:level,buildingLevel})};}));
+ return freeze(Array.from({length:30},(_,i)=>{const level=i+1;return{level,hospitalCapacity:hospitalCapacity(level),hospitalParallelThroughput:hospitalThroughput(level),forgePercent:forgeBonus(level),resourceFactor:1+.06*i,effortFactor:1+.04*i,buildingSpeedPercent:70*i/29,buildingSpeedFactor:buildingSpeed(level),quote:trainingQuote({unitId,count,forge:level,buildingLevel})};}));
 }
 export function hospitalCapacity(level){
  integer(level,0,30,'مستوى المستشفى');if(level===0)return 0;
@@ -118,6 +126,7 @@ export function hospitalCapacity(level){
  // Capacity milestones are proposed between the owner's two fixed endpoints.
  return Number(500n*roundRatio(5000n*841n+495000n*t*t,841n*500n));
 }
+export function hospitalThroughput(level){return hospitalCapacity(level)/2500;}
 function normalizedHospital(value,label){
  if(!value||typeof value!=='object'||Array.isArray(value))fail('بيانات مستشفى '+label+' ناقصة');
  const level=integer(value.level,0,30,'مستوى مستشفى '+label),capacity=hospitalCapacity(level);
@@ -153,7 +162,7 @@ export function resolveHospital(rows,hospital){
  const humanLost=IDS.reduce((n,id)=>n+losses[id],0),eligible=Number(roundRatio(BigInt(humanLost)*BigInt(WOUND_PERCENT),100n));
  const eligibleByUnit=proportionalCounts(losses,eligible),admitted=Math.min(eligible,freeBefore),admittedByUnit=monotoneAdmissions(eligibleByUnit,admitted);
  const resultRows=rows.map(row=>{const machine=MAP[row.id].group==='siege',wounded=admittedByUnit[row.id],woundEligible=eligibleByUnit[row.id];return {...row,woundEligible,wounded,overflow:woundEligible-wounded,dead:machine?0:row.lost-wounded,destroyed:machine?row.lost:0};});
- return {rows:resultRows,hospital:{level:config.level,capacity,occupiedBefore:config.occupied,freeBefore,humanLost,eligible,admitted,overflow:eligible-admitted,occupiedAfter:config.occupied+admitted,woundPercent:WOUND_PERCENT}};
+ return {rows:resultRows,hospital:{level:config.level,capacity,parallelThroughput:hospitalThroughput(config.level),occupiedBefore:config.occupied,freeBefore,humanLost,eligible,admitted,overflow:eligible-admitted,occupiedAfter:config.occupied+admitted,woundPercent:WOUND_PERCENT}};
 }
 export function wallStats(level,hp){integer(level,0,30,'مستوى السور');const max=1000*level;integer(hp,0,max,'متانة السور');return {level,max,hp,nominalPercent:level,intactPercent:max?100*hp/max:0,availablePercent:max?level*hp/max:0};}
 export function normalize(s){
@@ -253,6 +262,10 @@ function sharedSummary(value,rows,legacy){
 function sharedHospital(v,summaryValue){
  record(v,'المستشفى');const r={level:integer(v.level,0,30,'مستوى المستشفى'),...numberFields(v,['capacity','occupiedBefore','freeBefore','humanLost','eligible','admitted','overflow','occupiedAfter','woundPercent'],'المستشفى',{integerOnly:true,max:10000000})};
  if(r.capacity>500000||r.woundPercent>100||r.occupiedBefore+r.freeBefore!==r.capacity||r.occupiedAfter!==r.occupiedBefore+r.admitted||r.occupiedAfter>r.capacity||r.eligible!==r.admitted+r.overflow||r.admitted!==summaryValue.wounded||r.overflow!==summaryValue.overflow||r.humanLost!==summaryValue.humanLost||r.eligible!==summaryValue.woundEligible)fail('أعداد المستشفى غير متسقة');
+ // Existing version-3 snapshots used serial healing. Preserve their prices and
+ // times rather than inferring the current throughput from a historic level.
+ r.parallelThroughput=v.parallelThroughput===undefined?1:reportNumber(v.parallelThroughput,'قدرة العلاج المتوازي',{max:200});
+ if(r.level>0&&r.parallelThroughput===0)fail('قدرة العلاج المتوازي غير صالحة');
  return r;
 }
 function sharedQuote(v,expectedId,expectedCount,expectedForge,kind){
@@ -264,7 +277,7 @@ function sharedQuote(v,expectedId,expectedCount,expectedForge,kind){
  if(r.resourceTotal!==resourceSum(r.resources)||r.goldSaved!==r.goldBeforeDiscount-r.gold||r.normalGold!==0||r.nextMarginalDiscountPercent>20||r.theoreticalDiscountPercent>20.0000001||r.effectiveDiscountPercent>20.0000001)fail('ملخص التكلفة غير متسق');
  if(!Array.isArray(v.tiers)||v.tiers.length>GOLD_TIERS.length)fail('شرائح الذهب غير صالحة');
  r.tiers=v.tiers.map(x=>numberFields(x,['from','to','discountPercent','count'],'شريحة الذهب',{integerOnly:true,max:1000000}));if(r.tiers.reduce((n,x)=>n+x.count,0)!==r.count||r.tiers.some(x=>x.from<1||x.to<x.from||x.discountPercent>20))fail('شرائح العدد غير متسقة');
- if(kind==='healing'){r.hospitalLevel=integer(v.hospitalLevel,1,30,'مستشفى العلاج');r.resourcePercent=integer(v.resourcePercent,0,100,'نسبة موارد العلاج');}
+ if(kind==='healing'){r.hospitalLevel=integer(v.hospitalLevel,1,30,'مستشفى العلاج');r.resourcePercent=integer(v.resourcePercent,0,100,'نسبة موارد العلاج');r.parallelThroughput=v.parallelThroughput===undefined?1:reportNumber(v.parallelThroughput,'قدرة العلاج المتوازي',{max:200});if(r.parallelThroughput===0)fail('قدرة العلاج المتوازي غير صالحة');r.baseSerialSeconds=v.baseSerialSeconds===undefined?r.seconds:reportNumber(v.baseSerialSeconds,'زمن العلاج المتسلسل',{integerOnly:true,max:1000000000000});}
  return r;
 }
 function sharedQuoteCollection(v,rows,kind,countKey){

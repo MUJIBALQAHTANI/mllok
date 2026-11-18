@@ -223,6 +223,90 @@ test('healing prices use the wounded cohort equipment and 40 percent resources /
   }
 });
 
+test('hospital parallel treatment grows continuously from capacity, without an early team-count cliff',()=>{
+  assert.equal(E.hospitalThroughput(0),0);
+  assert.equal(E.hospitalThroughput(1),2);
+  assert.equal(E.hospitalThroughput(2),2.2);
+  assert.equal(E.hospitalThroughput(30),200);
+  for(let level=1;level<=30;level++)assert.equal(E.hospitalThroughput(level),E.hospitalCapacity(level)/2500);
+});
+
+test('parallel treatment changes throughput, not the 40 percent resource bill or 35 percent patient work',()=>{
+  for(const unitId of humanIds){
+    const h1=E.healingQuote({unitId,count:1000,forge:20,hospitalLevel:1});
+    const h30=E.healingQuote({unitId,count:1000,forge:20,hospitalLevel:30});
+    const recruit=quote(1000,20,30,unitId);
+    assert.deepEqual(h1.resources,h30.resources);assert.deepEqual(h1.unitResources,h30.unitResources);
+    assert.equal(h30.workPercent,35);assert.equal(h30.resourcePercent,40);
+    assert.ok(Math.abs(h30.unitSeconds-recruit.unitSeconds*.35)<1e-10);
+    assert.ok(h30.seconds<h1.seconds);assert.ok(h30.gold<=h1.gold);
+  }
+});
+
+test('full level30 hospitals clear 500000 equipped basic or heavy troops within the specified recovery targets',()=>{
+  const basic=E.healingQuote({unitId:'LightInfantry',count:500000,forge:30,hospitalLevel:30});
+  const heavy=E.healingQuote({unitId:'HeavyCavalry',count:500000,forge:30,hospitalLevel:30});
+  assert.equal(basic.parallelThroughput,200);assert.equal(heavy.parallelThroughput,200);
+  assert.equal(basic.seconds,22236);assert.equal(heavy.seconds,133412);
+  assert.ok(basic.seconds<7*3600);assert.ok(heavy.seconds<38*3600);
+  assert.ok(basic.baseSerialSeconds>basic.seconds*199);
+});
+
+test('one patient cannot be divided across 200 teams; empty treatment has no minimum fee or duration',()=>{
+  for(const unitId of humanIds){
+    const q=E.healingQuote({unitId,count:1,forge:30,hospitalLevel:30});
+    assert.equal(q.seconds,Math.ceil(q.unitSeconds));assert.ok(q.seconds>=q.unitSeconds);assert.equal(q.gold,1);
+    const empty=E.healingQuote({unitId,count:0,forge:30,hospitalLevel:30});
+    assert.equal(empty.seconds,0);assert.equal(empty.gold,0);assert.equal(empty.resourceTotal,0);
+  }
+});
+
+test('more hospital levels never increase a fixed treatment quantity duration or gold cost',()=>{
+  for(const unitId of humanIds)for(const count of [1,2,1000,500000]){
+    let previous=null;
+    for(let hospitalLevel=1;hospitalLevel<=30;hospitalLevel++){
+      const q=E.healingQuote({unitId,count,forge:30,hospitalLevel});
+      if(previous){assert.ok(q.seconds<=previous.seconds,`${unitId} ${count} H${hospitalLevel}`);assert.ok(q.gold<=previous.gold);assert.deepEqual(q.resources,previous.resources);}
+      previous=q;
+    }
+  }
+});
+
+test('healing quantity and gold remain monotone across patient and parallel capacity boundaries',()=>{
+  for(const hospitalLevel of [1,2,10,30])for(const unitId of ['LightInfantry','HeavyCavalry']){
+    let previous=null;
+    for(const count of [0,1,2,3,10,99,100,101,198,199,200,201,202,203,999,1000,1001,4999,5000,5001,50000,50001]){
+      const q=E.healingQuote({unitId,count,forge:30,hospitalLevel});
+      if(previous){assert.ok(q.seconds>=previous.seconds);assert.ok(q.gold>=previous.gold);}
+      if(count){assert.ok(q.seconds>=q.unitSeconds);assert.ok(q.gold>=1);}previous=q;
+    }
+  }
+});
+
+test('healing gold prices total parallel workload, without a full patient-duration charge on each partial cohort',()=>{
+  const q=E.healingQuote({unitId:'HeavyCavalry',count:1,forge:30,hospitalLevel:30});
+  assert.equal(q.seconds,54);
+  assert.equal(q.gold,1);
+  assert.ok(q.undiscountedGold<q.seconds/20);
+  assert.ok(Math.abs(q.undiscountedGold-q.unitSeconds/q.parallelThroughput/20)<1e-10);
+});
+
+test('mixed healing shares hospital throughput between sequential cohorts, rather than duplicating teams for every class',()=>{
+  const s=E.example();s.hospitals.attacker={level:30,occupied:0};
+  const r=E.simulate(s,stamp),h=r.economy.attacker.healing,active=h.quotes.filter(q=>q.count>0);
+  assert.ok(active.length>1);assert.equal(h.seconds,sum(active.map(q=>q.seconds)));
+  assert.ok(h.seconds>Math.max(...active.map(q=>q.seconds)));
+  assert.ok(active.every(q=>q.parallelThroughput===200));
+});
+
+test('already occupied beds do not throttle treatment when both hospitals can admit the same new patients',()=>{
+  const s=E.example();s.hospitals.attacker={level:30,occupied:0};
+  const a=E.simulate(s,stamp);s.hospitals.attacker.occupied=400000;
+  const b=E.simulate(s,stamp);
+  assert.equal(a.summary.attacker.wounded,b.summary.attacker.wounded);
+  assert.deepEqual(a.economy.attacker.healing,b.economy.attacker.healing);
+});
+
 test('level tables cover all 30 levels with independent equipment and building speed fields',()=>{
   const rows=E.levelTable('HeavyCavalry',100,12);
   assert.equal(rows.length,30);assert.equal(rows[0].level,1);assert.equal(rows[29].level,30);
@@ -355,6 +439,23 @@ test('V2 historical reports keep wounded, dead and healing costs unknown without
 test('injecting new hospital fields into a legacy snapshot does not invent historical wounded',()=>{
   const p=legacyReport('attacker');p.hospital={status:'simulated',attacker:{level:30,capacity:500000,admitted:9876}};p.economy={attacker:{goldTotal:9876}};
   const q=E.readSharedReport(p);assert.equal(q.hospital.status,'coming_soon');assert.equal(q.hospital.wounded,null);assert.equal(q.economy,null);
+});
+
+test('parallel treatment metadata survives shared snapshots, and older V3 quotes default to serial throughput without repricing',()=>{
+  const s=E.example();s.hospitals.attacker={level:30,occupied:0};
+  const p=E.projectReport(E.simulate(s,stamp),'attacker');
+  const shared=E.readSharedReport(E.decodePayload(E.encodePayload(p)));
+  assert.deepEqual(shared.economy.attacker.healing,p.economy.attacker.healing);
+  const old=copy(p);
+  for(const q of old.economy.attacker.healing.quotes){
+    q.seconds=q.baseSerialSeconds;delete q.parallelThroughput;delete q.baseSerialSeconds;
+  }
+  const restored=E.readSharedReport(old);
+  for(let i=0;i<restored.economy.attacker.healing.quotes.length;i++){
+    const q=restored.economy.attacker.healing.quotes[i],before=old.economy.attacker.healing.quotes[i];
+    assert.equal(q.parallelThroughput,1);assert.equal(q.baseSerialSeconds,before.seconds);
+    assert.equal(q.seconds,before.seconds);assert.equal(q.gold,before.gold);assert.deepEqual(q.resources,before.resources);
+  }
 });
 
 test('largest supported analyst report fits serialization limits without truncated costs',()=>{
