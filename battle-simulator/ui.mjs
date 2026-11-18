@@ -1,4 +1,4 @@
-import {VERSION,UNITS,IDS,RESOURCES,example,normalize,simulate,projectReport,forgeBonus,forgeFactor,encodePayload,decodePayload,hospitalCapacity,hospitalThroughput,ECONOMY,trainingQuote,retrofitQuote,levelTable,readSharedReport} from './engine.mjs';
+import {VERSION,UNITS,IDS,RESOURCES,example,normalize,simulate,projectReport,forgeBonus,forgeFactor,encodePayload,decodePayload,hospitalCapacity,hospitalThroughput,ECONOMY,trainingQuote,retrofitQuote,levelTable,readSharedReport} from './engine.mjs?v=20261118.3';
 const $=id=>document.getElementById(id),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const nf=new Intl.NumberFormat('en-US',{maximumFractionDigits:2});const fmt=v=>v===null||v===undefined?'—':nf.format(v),pct=v=>v===null||v===undefined?'—':fmt(v)+'%';
 const compact=n=>n==null?'؟':n>=1e6?fmt(n/1e6)+'M':n>=1e3?fmt(n/1e3)+'k':fmt(n);
