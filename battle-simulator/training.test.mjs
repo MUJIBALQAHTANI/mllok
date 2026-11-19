@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {TRAINING_VERSION,TRAINING_UNITS,BUILDING_CONFIG,RULES,RESOURCES,buildingTimeReduction,buildingTimeDetails,resourceEra,capacity,quoteTraining,levelRows,encodeTraining,decodeTraining} from './training-engine.mjs';
 const q=(unitId='LightInfantry',buildingLevel=1,forge=0,count=1,extra={})=>quoteTraining({unitId,buildingLevel,forge,count,...extra});
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-8,`${a} != ${b}`);
@@ -15,7 +16,7 @@ const reference={
 };
 
 test('approved roster is exactly eight units, with the six reference mappings and distinct siege proposals',()=>{
- assert.equal(TRAINING_VERSION,'GK_TRAINING_APPROVED_3.0.0');
+ assert.equal(TRAINING_VERSION,'GK_TRAINING_APPROVED_4.0.0');
  assert.equal(TRAINING_UNITS.length,8);assert.equal(BUILDING_CONFIG.stable.unitIds.length,3);
  assert.deepEqual(TRAINING_UNITS.map(u=>u.id).sort(),Object.keys(reference).sort());
  assert.throws(()=>q('ArcherCavalry'));
@@ -23,8 +24,9 @@ test('approved roster is exactly eight units, with the six reference mappings an
   assert.deepEqual([u.attack,u.def,u.cavDef,u.referenceBaseSeconds,...RESOURCES.map(k=>u.referenceBaseResources[k])],reference[u.id]);
   assert.equal(u.proposal,u.building==='workshop');
   assert.equal(u.baseReductionPercent,70);
+  assert.equal(u.timeBaseReductionPercent,70);assert.equal(u.resourceIncreasePercent,70);
   assert.equal(u.baseSeconds,u.referenceBaseSeconds*3/10);
-  for(const k of RESOURCES)assert.equal(u.baseResources[k],u.referenceBaseResources[k]*3/10);
+  for(const k of RESOURCES){assert.equal(u.previousBaseResources[k],u.referenceBaseResources[k]*3/10);assert.equal(u.baseResources[k],u.referenceBaseResources[k]*51/100);}
   for(const key of ['health','hp','upkeep','population'])assert.equal(Object.hasOwn(u,key),false);
  }
 });
@@ -42,24 +44,41 @@ test('all 7440 type/building/forge combinations obey resource gates and fixed mo
 test('resource amounts are additive at 5 and 10, never redistributed from locked materials',()=>{
  for(const u of TRAINING_UNITS){
   const a=q(u.id,4),b=q(u.id,5),c=q(u.id,9),d=q(u.id,10);
-  assert.equal(a.unitResources.wheat,u.baseResources.wheat);assert.equal(a.unitResources.wood,u.baseResources.wood);
-  assert.deepEqual(a.unitResources,{wheat:u.baseResources.wheat,wood:u.baseResources.wood,clay:0,iron:0});
+  assert.equal(a.unitResources.wheat,Math.ceil(u.baseResources.wheat));assert.equal(a.unitResources.wood,Math.ceil(u.baseResources.wood));
+  assert.deepEqual(a.unitResources,{wheat:Math.ceil(u.baseResources.wheat),wood:Math.ceil(u.baseResources.wood),clay:0,iron:0});
   assert.deepEqual(b.unitResources,{...a.unitResources,clay:Math.ceil(u.baseResources.clay)});assert.deepEqual(c.unitResources,b.unitResources);
   assert.deepEqual(d.unitResources,Object.fromEntries(RESOURCES.map(k=>[k,Math.ceil(u.baseResources[k])])));
   assert.equal(b.resourceTotal-a.resourceTotal,Math.ceil(u.baseResources.clay));assert.equal(d.resourceTotal-c.resourceTotal,Math.ceil(u.baseResources.iron));
  }
- assert.deepEqual(q('CamelCavalry',7).unitResources,{wheat:129,wood:129,clay:65,iron:0});
+ assert.deepEqual(q('CamelCavalry',7).unitResources,{wheat:220,wood:220,clay:110,iron:0});
 });
 
 
-test('resource70percent reduction stays fractional until one final per-unit ceiling after forge',()=>{
- const base=q('LightInfantry',10,0),f3=q('LightInfantry',10,3);
- assert.equal(base.referenceBaseUnitResources.iron,25);assert.equal(base.baseUnitResources.iron,7.5);assert.equal(base.unitResources.iron,8);
- assert.equal(f3.unitResources.iron,9);assert.notEqual(f3.unitResources.iron,Math.ceil(8*1.18));
- for(const u of TRAINING_UNITS)for(const f of [0,3,20,30]){
+test('resources rise70percent from the exact V3 base, with one final per-unit ceiling after forge',()=>{
+ assert.equal(RULES.baseResourceFactor,.51);assert.equal(RULES.previousBaseResourceFactor,.3);assert.equal(RULES.resourceIncreasePercent,70);
+ const base=q('LightInfantry',10,0),f4=q('LightInfantry',10,4);
+ assert.equal(base.previousBaseUnitResources.wheat,30);assert.equal(base.baseUnitResources.wheat,51);assert.equal(base.unitResources.wheat,51);
+ assert.equal(base.referenceBaseUnitResources.iron,25);assert.equal(base.previousBaseUnitResources.iron,7.5);assert.equal(base.baseUnitResources.iron,12.75);assert.equal(base.unitResources.iron,13);
+ assert.equal(f4.unitResources.iron,16);assert.notEqual(f4.unitResources.iron,Math.ceil(13*1.24));
+ for(const u of TRAINING_UNITS)for(const f of [0,4,20,30]){
   const quote=q(u.id,10,f,100);
-  for(const k of RESOURCES){const exact=u.referenceBaseResources[k]*3*(100+6*f)/1000;assert.ok(quote.unitResources[k]>=exact-1e-10);assert.ok(quote.unitResources[k]-exact<1);assert.equal(quote.resources[k],quote.unitResources[k]*100);}
+  for(const k of RESOURCES){const exact=u.referenceBaseResources[k]*51*(100+6*f)/10000;near(quote.baseUnitResources[k],quote.previousBaseUnitResources[k]*1.7);assert.ok(quote.unitResources[k]>=exact-1e-10);assert.ok(quote.unitResources[k]-exact<1);assert.equal(quote.resources[k],quote.unitResources[k]*100);}
  }
+});
+
+test('resources-only V4 preserves the actual V3 time gold combat movement and queue results for all7440 combinations',()=>{
+ // Captured from the unmodified GK_TRAINING_APPROVED_3.0.0 engine before the resources-only edit.
+ // Each case uses capacity+101 units, so batch boundaries, remainder timing and gold all participate.
+ const expectedV3='6c02227b9e6b1db76366489818f26ed0fdf8cdb15e86ae7e6d4442508fb1b3e4';
+ const fields=['unitId','buildingLevel','forge','count','combat','baseSeconds','referenceBaseSeconds','baseReductionPercent','timeBeforeBuildingSeconds','referenceTimeBeforeBuildingSeconds','unitTimeSavedSeconds','unitTimeSavedVsReferenceSeconds','totalTimeReductionVsReferencePercent','totalTimeFactorVsReference','trainingReductionPercent','timeFactor','buildingBonusPercent','buildingFactor','capacity','capacityNextLevel','batches','fullBatches','remainder','batchGold','totalGold','goldBeforeDiscount','goldSaved','undiscountedGold','discountedGold','averageGold','effectiveDiscountPercent','theoreticalDiscountPercent','seconds','perUnitTime','singleUnitSeconds','normalGold','movementSpeed','cargo','totalCargo','canTrainSingleBatch','availability','queueAssumption'];
+ const digest=createHash('sha256');let cases=0;
+ for(const u of TRAINING_UNITS)for(let b=1;b<=30;b++)for(let f=0;f<=30;f++){
+  const quote=q(u.id,b,f,capacity(u.building,b)+101);
+  const snapshot=Object.fromEntries(fields.map(k=>[k,quote[k]]));
+  snapshot.batchPlan=quote.batchPlan.map(({resources,...rest})=>rest);
+  digest.update(JSON.stringify(snapshot)+'\n');cases++;
+ }
+ assert.equal(cases,7440);assert.equal(digest.digest('hex'),expectedV3);
 });
 
 test('at the batch cap each building splits cap+1 and preserves the exact full-cap order',()=>{
@@ -177,6 +196,129 @@ test('input validation and versioned sharing reject removed units, old links and
  assert.throws(()=>q('LightInfantry',0));assert.throws(()=>q('LightInfantry',1,31));assert.throws(()=>q('LightInfantry',1,0,0));
  const input={unitId:'HeavyCavalry',count:150,forge:0,buildingLevel:5,castleLevel:20,heroPalaceLevel:10,secret:'discard'};
  const restored=decodeTraining(encodeTraining(input));assert.equal(restored.forge,0);assert.equal(restored.castleLevel,20);assert.equal(restored.heroPalaceLevel,10);assert.equal(Object.hasOwn(restored,'secret'),false);
- for(const payload of ['',null,'x'.repeat(2049),'@@@',btoa(JSON.stringify({...input,version:'GK_TRAINING_APPROVED_2.0.0'})).replace(/=/g,'')])assert.throws(()=>decodeTraining(payload));
+ for(const payload of ['',null,'x'.repeat(2049),'@@@',...['GK_TRAINING_APPROVED_2.0.0','GK_TRAINING_APPROVED_3.0.0'].map(version=>btoa(JSON.stringify({...input,version})).replace(/=/g,''))])assert.throws(()=>decodeTraining(payload));
  for(const u of TRAINING_UNITS){const max=q(u.id,30,30,1000000);for(const v of [max.seconds,max.totalGold,...Object.values(max.resources)])assert.ok(Number.isSafeInteger(v)&&v>0);}
+});
+
+/* Append to training.test.mjs; aliases avoid collisions with its existing tests. */
+import wallTest from 'node:test';
+import wallAssert from 'node:assert/strict';
+import {quoteWall as quoteConditionalWall, TRAINING_UNITS as WALL_TEST_UNITS} from './training-engine.mjs';
+const wallFixture = (patch = {}) => ({level: 10, hp: 10000, defenderUnitId: 'Archer', defenderCount: 100, defenderForge: 0, arrivingRams: 0, survivingRams: 0, ramForge: 0, survivingCatapults: 0, catapultForge: 0, attackerWon: false, usedDirect: 0, usedHour: 0, ...patch});
+const wallNear = (a, b) => wallAssert.ok(Math.abs(a - b) < 1e-8, `${a} != ${b}`);
+
+wallTest('wall: fixed durability and intact defense at every level including absent wall', () => {
+  for (let level = 0; level <= 30; level++) {
+    const q = quoteConditionalWall(wallFixture({level, hp: level * 1000}));
+    wallAssert.equal(q.wall.max, level * 1000);
+    wallNear(q.wall.nominalPercent, level); wallNear(q.wall.availablePercent, level); wallNear(q.wall.appliedPercent, level);
+    wallAssert.equal(q.wall.direct, 0); wallAssert.equal(q.wall.firePotential, 0);
+    wallNear(q.defender.fortifiedTotal.defense, q.defender.total.defense * (1 + level / 100));
+  }
+});
+
+wallTest('wall: half durability halves only the wall bonus and broken wall adds no defense', () => {
+  const half = quoteConditionalWall(wallFixture({level: 30, hp: 15000}));
+  wallAssert.equal(half.wall.availablePercent, 15); wallNear(half.wall.appliedPercent, 15);
+  const broken = quoteConditionalWall(wallFixture({level: 30, hp: 0, arrivingRams: 1000, survivingRams: 100, survivingCatapults: 100, attackerWon: true}));
+  wallAssert.equal(broken.wall.appliedPercent, 0); wallAssert.equal(broken.wall.direct, 0); wallAssert.equal(broken.wall.firePotential, 0);
+  wallNear(broken.defender.fortifiedTotal.defense, broken.defender.total.defense);
+});
+
+wallTest('wall: current eight-unit catalog and forge-zero baseline are applied once', () => {
+  for (const unit of WALL_TEST_UNITS) {
+    const q0 = quoteConditionalWall(wallFixture({defenderUnitId: unit.id, defenderForge: 0}));
+    const q30 = quoteConditionalWall(wallFixture({defenderUnitId: unit.id, defenderForge: 30}));
+    wallNear(q0.defender.perUnit.attack, unit.attack); wallNear(q0.defender.perUnit.defense, unit.def);
+    wallNear(q30.defender.perUnit.attack, unit.attack * 2.5); wallNear(q30.defender.perUnit.defense, unit.def * 2.5);
+    wallAssert.equal(q30.defender.forgeBonusPercent, 150);
+    wallAssert.equal(q30.defender.fortifiedTotal.attack, q30.defender.total.attack);
+  }
+  wallAssert.throws(() => quoteConditionalWall(wallFixture({defenderUnitId: 'ArcherCavalry'})));
+  const fixture = quoteConditionalWall(wallFixture({level: 30, hp: 30000, defenderCount: 1, defenderForge: 20}));
+  wallNear(fixture.defender.fortifiedPerUnit.defense, 121.16);
+  wallNear(fixture.defender.fortifiedPerUnit.cavalryDefense, 196.04);
+});
+
+wallTest('wall: participating rams suppress only the bonus and cannot remove native defense', () => {
+  const q = quoteConditionalWall(wallFixture({arrivingRams: 100, ramForge: 0}));
+  wallNear(q.wall.suppressionPercent, 25); wallNear(q.wall.appliedPercent, 7.5);
+  const high = quoteConditionalWall(wallFixture({arrivingRams: 1000000, ramForge: 30}));
+  wallAssert.ok(high.wall.suppressionPercent < 50);
+  wallAssert.ok(high.wall.appliedPercent > high.wall.availablePercent / 2);
+  wallAssert.ok(high.defender.fortifiedTotal.defense >= high.defender.total.defense);
+  wallAssert.equal(q.wall.direct, 0);
+});
+
+wallTest('wall: surviving siege after victory obeys minute/hour caps and separates potential fire', () => {
+  const q = quoteConditionalWall(wallFixture({arrivingRams: 100, survivingRams: 100, survivingCatapults: 20, attackerWon: true}));
+  wallAssert.equal(q.wall.directRaw, 1320); wallAssert.equal(q.wall.direct, 1000);
+  wallAssert.equal(q.wall.prevented, 320); wallAssert.equal(q.wall.firePotential, 60);
+  wallAssert.equal(q.wall.hpAfter, 9000); wallAssert.equal(q.wall.hpAfterFire, 8940); wallAssert.equal(q.wall.fireMinutes, 30);
+});
+
+wallTest('wall: equipment level30 uses factor2.50 for structural damage rather than old2.45', () => {
+  const q0 = quoteConditionalWall(wallFixture({level: 30, hp: 30000, arrivingRams: 10, survivingRams: 10, survivingCatapults: 10, attackerWon: true}));
+  const q30 = quoteConditionalWall(wallFixture({level: 30, hp: 30000, arrivingRams: 10, survivingRams: 10, survivingCatapults: 10, ramForge: 30, catapultForge: 30, attackerWon: true}));
+  wallAssert.equal(q0.wall.directRaw, 180); wallAssert.equal(q30.wall.directRaw, 450);
+  wallAssert.equal(q0.wall.firePotential, 30); wallAssert.equal(q30.wall.firePotential, 75);
+});
+
+wallTest('wall: integer damage floors once after combining fractional engine contributions', () => {
+  const q = quoteConditionalWall(wallFixture({arrivingRams: 1, survivingRams: 1, ramForge: 1, survivingCatapults: 1, catapultForge: 2, attackerWon: true}));
+  wallAssert.equal(q.wall.directRaw, 19); // floor(12.6 + 6.6), not floor(12.6) + floor(6.6).
+  wallAssert.equal(q.wall.firePotential, 3);
+});
+
+wallTest('wall: used budgets and half-direct limit constrain fire without postponing excess', () => {
+  const minute = quoteConditionalWall(wallFixture({arrivingRams: 100, survivingRams: 100, survivingCatapults: 20, attackerWon: true, usedDirect: 990, usedHour: 2000}));
+  wallAssert.equal(minute.wall.direct, 10); wallAssert.equal(minute.wall.firePotential, 5);
+  const hour = quoteConditionalWall(wallFixture({arrivingRams: 100, survivingRams: 100, survivingCatapults: 20, attackerWon: true, usedHour: 2497}));
+  wallAssert.equal(hour.wall.direct, 3); wallAssert.equal(hour.wall.firePotential, 0);
+  const exhausted = quoteConditionalWall(wallFixture({arrivingRams: 100, survivingRams: 100, survivingCatapults: 20, attackerWon: true, usedDirect: 1000, usedHour: 2500}));
+  wallAssert.equal(exhausted.wall.direct, 0); wallAssert.equal(exhausted.wall.firePotential, 0);
+});
+
+wallTest('wall: a lost assault, ordinary troops, or siege with no survivors causes no structural damage', () => {
+  const cases = [
+    {arrivingRams: 500, survivingRams: 100, survivingCatapults: 50, attackerWon: false},
+    {attackerWon: true},
+    {arrivingRams: 500, survivingRams: 0, survivingCatapults: 0, attackerWon: true},
+    {level: 0, hp: 0, arrivingRams: 1, survivingRams: 1, survivingCatapults: 1, attackerWon: true},
+  ];
+  for (const patch of cases) { const q = quoteConditionalWall(wallFixture(patch)); wallAssert.equal(q.wall.direct, 0); wallAssert.equal(q.wall.firePotential, 0); }
+});
+
+wallTest('wall: empty defenders receive no invented troops or native garrison strength', () => {
+  const q = quoteConditionalWall(wallFixture({level: 30, hp: 30000, defenderCount: 0, defenderForge: 30}));
+  wallAssert.equal(q.defender.count, 0);
+  wallAssert.deepEqual(q.defender.total, {attack: 0, defense: 0, cavalryDefense: 0});
+  wallAssert.deepEqual(q.defender.fortifiedTotal, {attack: 0, defense: 0, cavalryDefense: 0});
+  wallAssert.equal(q.conditional, true); wallAssert.equal(q.source, 'retained_siege_proposal_not_production');
+  wallAssert.equal(Object.hasOwn(q, 'winner'), false); wallAssert.equal(Object.hasOwn(q.defender, 'lost'), false);
+});
+
+wallTest('wall: rejects impossible survivors, malformed numbers, and inconsistent damage windows', () => {
+  for (const patch of [
+    {level: 31}, {level: -1}, {hp: 10001}, {hp: -1}, {level: 0, hp: 1},
+    {defenderCount: -1}, {defenderCount: 1000001}, {defenderForge: 31}, {defenderForge: -1},
+    {arrivingRams: 10, survivingRams: 11}, {arrivingRams: 0, survivingRams: 1},
+    {arrivingRams: 1.5}, {ramForge: 31}, {catapultForge: 31}, {survivingCatapults: 1000001},
+    {attackerWon: 'false'}, {usedDirect: 2, usedHour: 1}, {usedHour: 10001},
+    {hp: NaN}, {defenderCount: Infinity}, {ramForge: null}, {defenderUnitId: '__proto__'},
+  ]) wallAssert.throws(() => quoteConditionalWall(wallFixture(patch)));
+  wallAssert.throws(() => quoteConditionalWall(null));
+});
+
+wallTest('wall: mixed retained-siege cases conserve durability and honor every shared cap', () => {
+  for (let level = 1; level <= 30; level++) for (const forge of [0, 7, 30]) {
+    const max = level * 1000, hp = Math.floor(max * .63), usedDirect = level * 31, usedHour = level * 109;
+    const q = quoteConditionalWall(wallFixture({level, hp, defenderForge: forge, arrivingRams: 733, survivingRams: 211, ramForge: forge, survivingCatapults: 63, catapultForge: forge, attackerWon: true, usedDirect, usedHour}));
+    wallAssert.ok(q.wall.direct <= q.wall.directCap - usedDirect);
+    wallAssert.ok(q.wall.direct + q.wall.firePotential <= q.wall.hourCap - usedHour);
+    wallAssert.equal(q.wall.hpAfterFire + q.wall.direct + q.wall.firePotential, hp);
+    wallAssert.ok(q.wall.hpAfterFire >= 0); wallAssert.ok(q.wall.appliedPercent >= 0);
+    for (const key of ['directRaw', 'direct', 'firePotential', 'hpAfter', 'hpAfterFire']) wallAssert.ok(Number.isSafeInteger(q.wall[key]));
+    wallAssert.ok(Object.isFrozen(q)); wallAssert.ok(Object.isFrozen(q.wall)); wallAssert.ok(Object.isFrozen(q.defender.total));
+  }
 });

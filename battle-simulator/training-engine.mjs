@@ -6,12 +6,15 @@ export function freeze(value) {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 }
-export const TRAINING_VERSION = 'GK_TRAINING_APPROVED_3.0.0';
+export const TRAINING_VERSION = 'GK_TRAINING_APPROVED_4.0.0';
 export const RESOURCES = freeze(['wheat', 'wood', 'clay', 'iron']);
 export const RULES = freeze({
   forgePowerPerLevel: .05, forgeResourcePerLevel: .06, forgeEffortPerLevel: .04,
   secondsPerGold: 96, maxTimeReduction: .8,
-  baseReductionPercent: 70, baseResourceFactor: .3, baseTimeFactor: .3,
+  // baseReductionPercent remains a compatibility alias for the TIME reduction only.
+  baseReductionPercent: 70, timeBaseReductionPercent: 70, baseTimeFactor: .3,
+  resourceIncreasePercent: 70, resourceIncreaseFactor: 1.7,
+  previousBaseResourceFactor: .3, baseResourceFactor: .51,
   timeCurveLinearShare: .4, timeCurveQuadraticShare: .6,
   resourceEraBasis: 'training_building_level', forgeBaseline: 0,
   maxBuildingLevel: 30, maxForgeLevel: 30, maxCount: 1000000,
@@ -29,8 +32,9 @@ export const GOLD_TIERS = freeze([
 export const PROVENANCE = freeze({
   ownerRulesDate: '2026-11-19',
   resourceEras: 'owner_decision_training_building_1_4_5_9_10_30',
-  resourceCosts: 'owner_reference_values_then_owner_70_percent_base_reduction_for_all_eight_units',
-  baseReduction: 'owner_decision_70_percent_off_reference_resources_and_time_before_forge_and_building_effects',
+  resourceCosts: 'owner_reference_values_times_0_30_then_owner_70_percent_increase_to_current_resources_equals_0_51',
+  resourceIncrease: 'owner_decision_resources_only_70_percent_above_exact_V3_base_before_forge_and_single_per_unit_ceiling',
+  baseReduction: 'owner_decision_70_percent_off_reference_time_unchanged_from_V3_resources_now_separate',
   siegeResourcesAndTime: 'proposal_ram_600_600_300_150_480s_catapult_750_750_375_190_600s',
   infantryCombatAndTime: 'owner_image_IMG_2651(1).jpeg',
   cavalryCombatAndTime: 'owner_image_IMG_2653.jpeg_mapped_to_three_GloryKings_names',
@@ -66,7 +70,7 @@ const definitions = [
   ['CamelCavalry', 'فارس الجمل', 'الجمل', 'stable', 'فرسان دفاعية', 'فرسان دفاعية؛ أقوى دفاع مشاة بين الفرسان الثلاثة', 76, 150.7, 116.2, 380, 430, 430, 215, 110, 7, 'فارس البيداء'],
   ['HeavyCavalry', 'سلاح الفرسان', 'الثقيل', 'stable', 'فرسان هجومية ثقيلة', 'أعلى هجوم بين الفرسان الثلاثة، بتكلفة ومدة أكبر', 243.3, 111.1, 105.3, 463, 550, 550, 270, 140, 10, 'كورِنثي ساحق'],
   ['BatteringRam', 'كبش الحصار', 'كبش', 'workshop', 'آلة حصار', 'آلة لإضعاف السور؛ هجوم الاشتباك المباشر منخفض', 2, 20, 50, 480, 600, 600, 300, 150, null, 'القيم القتالية من المحاكي السابق'],
-  ['FireCatapult', 'المنجنيق', 'منجنيق', 'workshop', 'آلة حصار', 'آلة قصف؛ أثر السور يحسب في محاكي المعارك', 95, 90, 55, 600, 750, 750, 375, 190, null, 'القيم القتالية من المحاكي السابق'],
+  ['FireCatapult', 'المنجنيق', 'منجنيق', 'workshop', 'آلة حصار', 'آلة قصف؛ أثر السور يحسب في قسم السور', 95, 90, 55, 600, 750, 750, 375, 190, null, 'القيم القتالية من المحاكي السابق'],
 ];
 export const TRAINING_UNITS = freeze(definitions.map(([id, name, short, building, category, role, attack, def, cavDef, baseSeconds, wheat, wood, clay, iron, heroUnlock, referenceName]) => {
   const siege = building === 'workshop';
@@ -74,8 +78,11 @@ export const TRAINING_UNITS = freeze(definitions.map(([id, name, short, building
     id, name, short, building, category, role, attack, def, cavDef,
     referenceBaseSeconds: baseSeconds, baseSeconds: baseSeconds * 3 / 10,
     referenceBaseResources: {wheat, wood, clay, iron},
-    baseResources: {wheat: wheat * 3 / 10, wood: wood * 3 / 10, clay: clay * 3 / 10, iron: iron * 3 / 10},
-    baseReductionPercent: 70,
+    previousBaseResources: {wheat: wheat * 3 / 10, wood: wood * 3 / 10, clay: clay * 3 / 10, iron: iron * 3 / 10},
+    baseResources: {wheat: wheat * 51 / 100, wood: wood * 51 / 100, clay: clay * 51 / 100, iron: iron * 51 / 100},
+    baseReductionPercent: 70, timeBaseReductionPercent: 70,
+    resourceIncreasePercent: 70, resourceIncreaseFactor: 1.7,
+    previousBaseResourceFactor: .3, baseResourceFactor: .51,
     movementSpeed: siege ? 3 : building === 'stable' ? 20 : 10,
     cargo: siege ? 30 : building === 'stable' ? 20 : 10,
     unlock: heroUnlock ? {building: 'heroPalace', name: 'قصر الأبطال', level: heroUnlock} : siege ? {building: 'castle', name: 'القلعة', level: 10} : null,
@@ -83,7 +90,7 @@ export const TRAINING_UNITS = freeze(definitions.map(([id, name, short, building
     sources: {
       combat: siege ? PROVENANCE.siegeCombat : building === 'barracks' ? PROVENANCE.infantryCombatAndTime : PROVENANCE.cavalryCombatAndTime,
       time: siege ? 'previous_proposal_then_owner_70_percent_reduction' : 'owner_reference_image_then_owner_70_percent_reduction',
-      resources: siege ? 'previous_proposal_then_owner_70_percent_reduction' : 'owner_explicit_values_then_owner_70_percent_reduction',
+      resources: siege ? 'previous_proposal_times_0_30_then_current_resources_increased_70_percent' : 'owner_explicit_values_times_0_30_then_current_resources_increased_70_percent',
     },
   };
 }));
@@ -134,7 +141,7 @@ export function buildingTimeDetails(level) {
   const prior = level > 1 ? buildingTimeReduction(level - 1) : 0;
   const next = level < 30 ? buildingTimeReduction(level + 1) : reduction;
   return freeze({level, reductionPercent: reduction * 100, timeFactor: Number(ratio.numerator) / Number(ratio.denominator),
-    baseReductionPercent: 70, totalTimeReductionVsReferencePercent: 70 + 30 * reduction,
+    baseReductionPercent: 70, timeBaseReductionPercent: 70, totalTimeReductionVsReferencePercent: 70 + 30 * reduction,
     totalTimeFactorVsReference: Number(3n * ratio.numerator) / Number(10n * ratio.denominator),
     incrementPercentagePoints: (reduction - prior) * 100, nextReductionPercent: next * 100,
     nextIncrementPercentagePoints: level < 30 ? (next - reduction) * 100 : 0});
@@ -153,9 +160,9 @@ export function quoteTraining(input) {
   const unit = unitMap[unitId], config = buildingConfig(building), era = resourceEra(buildingLevel);
   const limit = capacity(building, buildingLevel), ratio = durationRatio(buildingLevel);
   const resourceHundredths = 100 + 6 * forge, effortHundredths = 100 + 4 * forge;
-  // Apply the 70% base reduction before forge, then round each per-unit resource once.
-  // The original reference integers keep values such as 7.5 iron exact until the final ceiling.
-  const unitResources = Object.fromEntries(RESOURCES.map(key => [key, era.unlockedResources.includes(key) ? Number(ceilRatio(BigInt(unit.referenceBaseResources[key]) * 3n * BigInt(resourceHundredths), 1000n)) : 0]));
+  // V4 increases the exact V3 resource base by 70%: reference * .30 * 1.70 = reference * .51.
+  // Apply forge next, then round each per-unit resource once. Time remains at reference * .30.
+  const unitResources = Object.fromEntries(RESOURCES.map(key => [key, era.unlockedResources.includes(key) ? Number(ceilRatio(BigInt(unit.referenceBaseResources[key]) * 51n * BigInt(resourceHundredths), 10000n)) : 0]));
   const resources = Object.fromEntries(RESOURCES.map(key => [key, unitResources[key] * count]));
   const workNumerator = BigInt(unit.referenceBaseSeconds) * 3n * BigInt(effortHundredths) * ratio.numerator;
   const workDenominator = 1000n * ratio.denominator;
@@ -188,11 +195,12 @@ export function quoteTraining(input) {
   return freeze({
     version: TRAINING_VERSION, source: 'owner_rules_and_documented_proposals', ...normalized,
     name: unit.name, category: unit.category, role: unit.role, buildingName: config.name,
-    era, unlockedResources: [...era.unlockedResources], baseUnitResources: {...unit.baseResources}, referenceBaseUnitResources: {...unit.referenceBaseResources}, unitResources, resources,
+    era, unlockedResources: [...era.unlockedResources], baseUnitResources: {...unit.baseResources}, previousBaseUnitResources: {...unit.previousBaseResources}, referenceBaseUnitResources: {...unit.referenceBaseResources}, unitResources, resources,
+    resourceIncreasePercent: 70, resourceIncreaseFactor: 1.7, previousBaseResourceFactor: .3, baseResourceFactor: .51,
     resourceBudgetPerUnit: sumResources(unitResources), resourceTotal: sumResources(resources),
     combat: {base: baseCombat, perUnit, total}, forgeBonusPercent: 5 * forge, forgeFactor: powerHundredths / 100,
     resourceFactor: resourceHundredths / 100, effortFactor: effortHundredths / 100,
-    baseSeconds: unit.baseSeconds, referenceBaseSeconds: unit.referenceBaseSeconds, baseReductionPercent: 70,
+    baseSeconds: unit.baseSeconds, referenceBaseSeconds: unit.referenceBaseSeconds, baseReductionPercent: 70, timeBaseReductionPercent: 70,
     timeBeforeBuildingSeconds: beforeBuilding, referenceTimeBeforeBuildingSeconds: referenceBeforeBuilding,
     unitTimeSavedSeconds: beforeBuilding - perUnitTime, unitTimeSavedVsReferenceSeconds: referenceBeforeBuilding - perUnitTime,
     totalTimeReductionVsReferencePercent: timeDetails.totalTimeReductionVsReferencePercent,
@@ -232,4 +240,92 @@ export function decodeTraining(encoded) {
   catch { throw new Error('تعذر قراءة رابط التدريب'); }
   if (!value || value.version !== TRAINING_VERSION) throw new Error('إصدار رابط التدريب قديم؛ أنشئ حسبة جديدة بقواعد الاعتماد الأخيرة');
   return freeze(validate(value));
+}
+
+/* Append to training-engine.mjs. Uses its current TRAINING_UNITS and freeze.
+ * This is a conditional wall calculator, not a battle or survivor predictor.
+ * Wall level/HP anchors are owner decisions; the retained siege limits and
+ * suppression/damage coefficients remain a proposed simulation model.
+ */
+export function quoteWall(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('مدخلات السور غير صالحة');
+  const wallInt = (value, min, max, label) => {
+    if (!Number.isSafeInteger(value) || value < min || value > max) throw new Error(`${label} يجب أن يكون عددًا صحيحًا بين ${min} و${max}`);
+    return value;
+  };
+  const level = wallInt(input.level, 0, 30, 'مستوى السور'), max = level * 1000;
+  const hp = wallInt(input.hp, 0, max, 'متانة السور');
+  const unit = TRAINING_UNITS.find(candidate => candidate.id === input.defenderUnitId);
+  if (!unit) throw new Error('اختر جنديًا مدافعًا من الأنواع الحالية');
+  const defenderCount = wallInt(input.defenderCount, 0, 1000000, 'عدد المدافعين');
+  const defenderForge = wallInt(input.defenderForge, 0, 30, 'حداد المدافع');
+  const arrivingRams = wallInt(input.arrivingRams, 0, 1000000, 'الكباش المشاركة');
+  const survivingRams = wallInt(input.survivingRams, 0, arrivingRams, 'الكباش الناجية');
+  const ramForge = wallInt(input.ramForge, 0, 30, 'حداد الكباش');
+  const survivingCatapults = wallInt(input.survivingCatapults, 0, 1000000, 'المنجنيقات الناجية');
+  const catapultForge = wallInt(input.catapultForge, 0, 30, 'حداد المنجنيق');
+  const usedDirect = wallInt(input.usedDirect, 0, max, 'ضرر الدقيقة السابقة');
+  const usedHour = wallInt(input.usedHour, 0, max, 'ضرر الساعة السابقة');
+  if (usedDirect > usedHour) throw new Error('ضرر الدقيقة لا يمكن أن يتجاوز مجموع ضرر الساعة');
+  if (typeof input.attackerWon !== 'boolean') throw new Error('حدد نتيجة الهجوم المشروطة بوضوح');
+  const attackerWon = input.attackerWon;
+  const normalized = {level, hp, defenderUnitId: unit.id, defenderCount, defenderForge, arrivingRams, survivingRams, ramForge, survivingCatapults, catapultForge, attackerWon, usedDirect, usedHour};
+
+  // Forge zero is the base in the current training catalog. Never import the
+  // old battle engine's forge-one baseline or its obsolete nine-unit catalog.
+  const ramHundredths = 100 + 5 * ramForge, catapultHundredths = 100 + 5 * catapultForge;
+  const effectiveRams100 = BigInt(arrivingRams) * BigInt(ramHundredths);
+  const wallNumerator = level ? BigInt(level * hp) * (effectiveRams100 + BigInt(2000 * level)) : 0n;
+  const wallDenominator = level ? BigInt(100 * max) * 2n * (effectiveRams100 + BigInt(1000 * level)) : 1n;
+  const suppression = level ? Number(effectiveRams100) / Number(2n * (effectiveRams100 + BigInt(1000 * level))) : 0;
+  const appliedPercent = Number(wallNumerator) * 100 / Number(wallDenominator);
+
+  const survivingRams100 = BigInt(survivingRams) * BigInt(ramHundredths);
+  const survivingCatapults100 = BigInt(survivingCatapults) * BigInt(catapultHundredths);
+  // Structural damage uses the declared surviving engines after a declared
+  // attacker victory. It does not infer victory or survivors from troop power.
+  const directRaw = attackerWon ? Number((12n * survivingRams100 + 6n * survivingCatapults100) / 100n) : 0;
+  const directCap = Math.floor(max / 10), hourCap = Math.floor(max / 4);
+  const remainingDirectBudget = Math.max(0, directCap - usedDirect);
+  const remainingHourBudget = Math.max(0, hourCap - usedHour);
+  const direct = Math.min(directRaw, hp, remainingDirectBudget, remainingHourBudget);
+  let firePotential = 0;
+  if (attackerWon && direct > 0) {
+    // Keep all fire candidates in hundredths until the final floor, including
+    // the half-direct limit. No intermediate floating-point damage rounding.
+    const candidates = [3n * survivingCatapults100, BigInt(max) * 2n, BigInt(direct) * 50n, BigInt(hp - direct) * 100n, BigInt(Math.max(0, remainingHourBudget - direct)) * 100n];
+    firePotential = Number(candidates.reduce((lowest, value) => value < lowest ? value : lowest) / 100n);
+  }
+  const wall = {
+    level, max, hp, nominalPercent: level,
+    intactPercent: max ? 100 * hp / max : 0,
+    availablePercent: max ? level * hp / max : 0,
+    ramEffectiveCount: Number(effectiveRams100) / 100,
+    suppressionPercent: suppression * 100, appliedPercent,
+    directRaw, direct, prevented: directRaw - direct, firePotential, fireMinutes: 30,
+    hpAfter: hp - direct, hpAfterFire: hp - direct - firePotential,
+    directCap, hourCap, usedDirect, usedHour, remainingDirectBudget, remainingHourBudget,
+  };
+
+  const forgeHundredths = 100 + 5 * defenderForge;
+  const base = {attack: unit.attack, defense: unit.def, cavalryDefense: unit.cavDef};
+  const perUnit = {}, total = {}, fortifiedPerUnit = {}, fortifiedTotal = {};
+  for (const [key, baseValue] of Object.entries(base)) {
+    const baseTenths = BigInt(Math.round(baseValue * 10));
+    const forgedNumerator = baseTenths * BigInt(forgeHundredths);
+    perUnit[key] = Number(forgedNumerator) / 1000;
+    total[key] = Number(forgedNumerator * BigInt(defenderCount)) / 1000;
+    if (key === 'attack') {
+      fortifiedPerUnit[key] = perUnit[key]; fortifiedTotal[key] = total[key];
+    } else {
+      const numerator = forgedNumerator * (wallDenominator + wallNumerator), denominator = 1000n * wallDenominator;
+      fortifiedPerUnit[key] = Number(numerator) / Number(denominator);
+      fortifiedTotal[key] = Number(numerator * BigInt(defenderCount)) / Number(denominator);
+    }
+  }
+  return freeze({
+    version: 'GK_WALL_CONDITIONAL_1', source: 'retained_siege_proposal_not_production',
+    conditional: true, input: normalized, wall,
+    defender: {unitId: unit.id, name: unit.name, count: defenderCount, forge: defenderForge, forgeBonusPercent: 5 * defenderForge, forgeFactor: forgeHundredths / 100, base, perUnit, total, fortifiedPerUnit, fortifiedTotal},
+  });
 }
