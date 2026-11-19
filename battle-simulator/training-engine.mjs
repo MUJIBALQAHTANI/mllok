@@ -6,11 +6,12 @@ export function freeze(value) {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 }
-export const TRAINING_VERSION = 'GK_TRAINING_APPROVED_2.0.0';
+export const TRAINING_VERSION = 'GK_TRAINING_APPROVED_3.0.0';
 export const RESOURCES = freeze(['wheat', 'wood', 'clay', 'iron']);
 export const RULES = freeze({
   forgePowerPerLevel: .05, forgeResourcePerLevel: .06, forgeEffortPerLevel: .04,
   secondsPerGold: 96, maxTimeReduction: .8,
+  baseReductionPercent: 70, baseResourceFactor: .3, baseTimeFactor: .3,
   timeCurveLinearShare: .4, timeCurveQuadraticShare: .6,
   resourceEraBasis: 'training_building_level', forgeBaseline: 0,
   maxBuildingLevel: 30, maxForgeLevel: 30, maxCount: 1000000,
@@ -28,7 +29,8 @@ export const GOLD_TIERS = freeze([
 export const PROVENANCE = freeze({
   ownerRulesDate: '2026-11-19',
   resourceEras: 'owner_decision_training_building_1_4_5_9_10_30',
-  resourceCosts: 'owner_values_for_six_units_each_wheat_and_wood_separately',
+  resourceCosts: 'owner_reference_values_then_owner_70_percent_base_reduction_for_all_eight_units',
+  baseReduction: 'owner_decision_70_percent_off_reference_resources_and_time_before_forge_and_building_effects',
   siegeResourcesAndTime: 'proposal_ram_600_600_300_150_480s_catapult_750_750_375_190_600s',
   infantryCombatAndTime: 'owner_image_IMG_2651(1).jpeg',
   cavalryCombatAndTime: 'owner_image_IMG_2653.jpeg_mapped_to_three_GloryKings_names',
@@ -38,7 +40,7 @@ export const PROVENANCE = freeze({
   forgeResourcesAndTime: 'retained_previous_proposal_6pct_resources_4pct_effort_rebased_to_forge0',
   timeMaximum: 'owner_decision_80_percent_duration_reduction_at_building30',
   timeCurve: 'proposal_40percent_linear_60percent_quadratic_growth',
-  capacity: 'previous_project_report_037_not_live_verified',
+  capacity: 'owner_images_IMG_2657_to_IMG_2665_barracks300_stable150_workshop75_growth25percent',
   capacityUnit: 'troops_or_machines_per_training_batch_not_source_image_population',
   gold: 'proposal_96_effective_seconds_per_gold_marginal_tiers_per_batch_resources_still_required',
   cavalryUnlock: 'owner_decision_hero_palace_3_7_10',
@@ -47,11 +49,11 @@ export const PROVENANCE = freeze({
     'Camel iron at level7 conflicts with global no-iron-before10; global resource rule takes precedence.',
     'Unlock requirements and training-building resource eras are independent. Four resources apply from training building10, not from forge1 alone.',
   ],
-  excludedSourceRows: ['population_capacity', 'wheat_upkeep', 'training_per_24h', 'costs_per_24h'],
+  excludedSourceRows: ['population_capacity', 'wheat_upkeep', 'training_per_24h', 'costs_per_24h', 'old_building_speed_bonus', 'old_building_resource_prices', 'conflicting_old_unlocks'],
 });
 
 export const BUILDING_CONFIG = freeze({
-  barracks: {id: 'barracks', name: 'الثكنة', baseCapacity: 100, unitIds: ['LightInfantry', 'Archer', 'SpearInfantry'], opensAtCastle: null},
+  barracks: {id: 'barracks', name: 'الثكنة', baseCapacity: 300, unitIds: ['LightInfantry', 'Archer', 'SpearInfantry'], opensAtCastle: null},
   stable: {id: 'stable', name: 'الإسطبل', baseCapacity: 150, unitIds: ['LightCavalry', 'CamelCavalry', 'HeavyCavalry'], opensAtCastle: 3},
   workshop: {id: 'workshop', name: 'ورشة العربات', baseCapacity: 75, unitIds: ['BatteringRam', 'FireCatapult'], opensAtCastle: 10},
 });
@@ -69,15 +71,19 @@ const definitions = [
 export const TRAINING_UNITS = freeze(definitions.map(([id, name, short, building, category, role, attack, def, cavDef, baseSeconds, wheat, wood, clay, iron, heroUnlock, referenceName]) => {
   const siege = building === 'workshop';
   return {
-    id, name, short, building, category, role, attack, def, cavDef, baseSeconds,
-    baseResources: {wheat, wood, clay, iron},
+    id, name, short, building, category, role, attack, def, cavDef,
+    referenceBaseSeconds: baseSeconds, baseSeconds: baseSeconds * 3 / 10,
+    referenceBaseResources: {wheat, wood, clay, iron},
+    baseResources: {wheat: wheat * 3 / 10, wood: wood * 3 / 10, clay: clay * 3 / 10, iron: iron * 3 / 10},
+    baseReductionPercent: 70,
     movementSpeed: siege ? 3 : building === 'stable' ? 20 : 10,
     cargo: siege ? 30 : building === 'stable' ? 20 : 10,
     unlock: heroUnlock ? {building: 'heroPalace', name: 'قصر الأبطال', level: heroUnlock} : siege ? {building: 'castle', name: 'القلعة', level: 10} : null,
     referenceName, proposal: siege,
     sources: {
       combat: siege ? PROVENANCE.siegeCombat : building === 'barracks' ? PROVENANCE.infantryCombatAndTime : PROVENANCE.cavalryCombatAndTime,
-      time: siege ? 'proposed' : 'owner_reference_image', resources: siege ? 'proposed' : 'owner_explicit_values',
+      time: siege ? 'previous_proposal_then_owner_70_percent_reduction' : 'owner_reference_image_then_owner_70_percent_reduction',
+      resources: siege ? 'previous_proposal_then_owner_70_percent_reduction' : 'owner_explicit_values_then_owner_70_percent_reduction',
     },
   };
 }));
@@ -128,6 +134,8 @@ export function buildingTimeDetails(level) {
   const prior = level > 1 ? buildingTimeReduction(level - 1) : 0;
   const next = level < 30 ? buildingTimeReduction(level + 1) : reduction;
   return freeze({level, reductionPercent: reduction * 100, timeFactor: Number(ratio.numerator) / Number(ratio.denominator),
+    baseReductionPercent: 70, totalTimeReductionVsReferencePercent: 70 + 30 * reduction,
+    totalTimeFactorVsReference: Number(3n * ratio.numerator) / Number(10n * ratio.denominator),
     incrementPercentagePoints: (reduction - prior) * 100, nextReductionPercent: next * 100,
     nextIncrementPercentagePoints: level < 30 ? (next - reduction) * 100 : 0});
 }
@@ -145,10 +153,12 @@ export function quoteTraining(input) {
   const unit = unitMap[unitId], config = buildingConfig(building), era = resourceEra(buildingLevel);
   const limit = capacity(building, buildingLevel), ratio = durationRatio(buildingLevel);
   const resourceHundredths = 100 + 6 * forge, effortHundredths = 100 + 4 * forge;
-  const unitResources = Object.fromEntries(RESOURCES.map(key => [key, era.unlockedResources.includes(key) ? Number(ceilRatio(BigInt(unit.baseResources[key] * resourceHundredths), 100n)) : 0]));
+  // Apply the 70% base reduction before forge, then round each per-unit resource once.
+  // The original reference integers keep values such as 7.5 iron exact until the final ceiling.
+  const unitResources = Object.fromEntries(RESOURCES.map(key => [key, era.unlockedResources.includes(key) ? Number(ceilRatio(BigInt(unit.referenceBaseResources[key]) * 3n * BigInt(resourceHundredths), 1000n)) : 0]));
   const resources = Object.fromEntries(RESOURCES.map(key => [key, unitResources[key] * count]));
-  const workNumerator = BigInt(unit.baseSeconds * effortHundredths) * ratio.numerator;
-  const workDenominator = 100n * ratio.denominator;
+  const workNumerator = BigInt(unit.referenceBaseSeconds) * 3n * BigInt(effortHundredths) * ratio.numerator;
+  const workDenominator = 1000n * ratio.denominator;
   const perUnitTime = Number(workNumerator) / Number(workDenominator);
   const fullBatches = Math.floor(count / limit), remainder = count % limit, plan = [];
   function addBatch(batchCount, repeats) {
@@ -173,20 +183,26 @@ export function quoteTraining(input) {
   const baseCombat = {attack: unit.attack, defense: unit.def, cavalryDefense: unit.cavDef};
   const perUnit = Object.fromEntries(Object.entries(baseCombat).map(([key, value]) => [key, Math.round(value * 10) * powerHundredths / 1000]));
   const total = Object.fromEntries(Object.entries(baseCombat).map(([key, value]) => [key, Math.round(value * 10) * powerHundredths * count / 1000]));
-  const timeDetails = buildingTimeDetails(buildingLevel), beforeBuilding = unit.baseSeconds * effortHundredths / 100;
+  const timeDetails = buildingTimeDetails(buildingLevel), beforeBuilding = unit.referenceBaseSeconds * 3 * effortHundredths / 1000;
+  const referenceBeforeBuilding = unit.referenceBaseSeconds * effortHundredths / 100;
   return freeze({
     version: TRAINING_VERSION, source: 'owner_rules_and_documented_proposals', ...normalized,
     name: unit.name, category: unit.category, role: unit.role, buildingName: config.name,
-    era, unlockedResources: [...era.unlockedResources], baseUnitResources: {...unit.baseResources}, unitResources, resources,
+    era, unlockedResources: [...era.unlockedResources], baseUnitResources: {...unit.baseResources}, referenceBaseUnitResources: {...unit.referenceBaseResources}, unitResources, resources,
     resourceBudgetPerUnit: sumResources(unitResources), resourceTotal: sumResources(resources),
     combat: {base: baseCombat, perUnit, total}, forgeBonusPercent: 5 * forge, forgeFactor: powerHundredths / 100,
     resourceFactor: resourceHundredths / 100, effortFactor: effortHundredths / 100,
-    baseSeconds: unit.baseSeconds, timeBeforeBuildingSeconds: beforeBuilding, unitTimeSavedSeconds: beforeBuilding - perUnitTime,
+    baseSeconds: unit.baseSeconds, referenceBaseSeconds: unit.referenceBaseSeconds, baseReductionPercent: 70,
+    timeBeforeBuildingSeconds: beforeBuilding, referenceTimeBeforeBuildingSeconds: referenceBeforeBuilding,
+    unitTimeSavedSeconds: beforeBuilding - perUnitTime, unitTimeSavedVsReferenceSeconds: referenceBeforeBuilding - perUnitTime,
+    totalTimeReductionVsReferencePercent: timeDetails.totalTimeReductionVsReferencePercent,
+    totalTimeFactorVsReference: timeDetails.totalTimeFactorVsReference,
     trainingReductionPercent: timeDetails.reductionPercent, timeFactor: timeDetails.timeFactor, buildingTime: timeDetails,
     buildingBonusPercent: timeDetails.reductionPercent, buildingFactor: timeDetails.timeFactor,
     movementSpeed: unit.movementSpeed, cargo: unit.cargo, totalCargo: unit.cargo * count,
     availability: availabilityFor(unit, normalized),
     capacity: limit, capacitySource: PROVENANCE.capacity, capacityUnit: PROVENANCE.capacityUnit,
+    capacityNextLevel: buildingLevel < 30 ? capacity(building, buildingLevel + 1) : null,
     batches: fullBatches + (remainder ? 1 : 0), fullBatches, remainder, batchPlan: plan, batchGold: plan[0].gold,
     totalGold, goldBeforeDiscount, goldSaved: goldBeforeDiscount - totalGold, undiscountedGold, discountedGold,
     averageGold: totalGold / count,
