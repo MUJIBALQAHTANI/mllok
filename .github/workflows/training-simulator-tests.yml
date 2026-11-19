@@ -6,6 +6,7 @@ on:
       - 'battle-simulator/training*'
       - 'battle-simulator/verify-training-published.mjs'
       - 'battle-simulator/docs/TRAINING_SIMULATOR_AR.md'
+      - 'battle-simulator/docs/training-approved-data.json'
       - '.github/workflows/training-simulator-tests.yml'
 permissions:
   contents: read
